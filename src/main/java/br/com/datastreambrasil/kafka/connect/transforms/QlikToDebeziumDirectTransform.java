@@ -1,4 +1,4 @@
-package br.com.mercantil.kafka.connect.transforms;
+package br.com.datastreambrasil.kafka.connect.transforms;
 
 import org.apache.kafka.common.config.ConfigDef;
 import org.apache.kafka.connect.connector.ConnectRecord;
