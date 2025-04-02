@@ -11,13 +11,6 @@ import java.util.Map;
 
 public class QlikToDebeziumDirectTransform<R extends ConnectRecord<R>> implements Transformation<R> {
 
-    private static final Schema PAYLOAD_SCHEMA = SchemaBuilder.struct()
-            .name("payload")
-            .field("before", SchemaBuilder.struct().optional().build())
-            .field("after", SchemaBuilder.struct().optional().build())
-            .field("op", Schema.OPTIONAL_STRING_SCHEMA)
-            .build();
-
     @Override
     public void configure(Map<String, ?> configs) {
     }
@@ -34,58 +27,65 @@ public class QlikToDebeziumDirectTransform<R extends ConnectRecord<R>> implement
         }
 
         Map<String, Object> qlikMessage = (Map<String, Object>) record.value();
-        Struct payloadStruct = new Struct(PAYLOAD_SCHEMA);
 
+        Schema beforeSchema = SchemaBuilder.struct().build();
+        Struct beforeStruct = new Struct(beforeSchema);
         // Copia toda a estrutura beforeData para before
         if (qlikMessage.containsKey("beforeData")) {
             Map<String, Object> beforeData = (Map<String, Object>) qlikMessage.get("beforeData");
             if (beforeData != null) {
-                // Criando um Struct para "before"
-                Struct beforeStruct = new Struct(PAYLOAD_SCHEMA.field("before").schema());
-                // Atribua os dados do beforeData para os campos do "beforeStruct"
-                beforeData.forEach(beforeStruct::put);
-
-                payloadStruct.put("before", beforeStruct);
+                beforeSchema = createDynamicSchema(beforeData);
+                beforeStruct = createDynamicStruct(beforeSchema, beforeData);
             }
         }
 
+        Schema afterSchema = SchemaBuilder.struct().build();
+        Struct afterStruct = new Struct(afterSchema);
         // Copia toda a estrutura data para after
         if (qlikMessage.containsKey("data")) {
-            Map<String, Object> data = (Map<String, Object>) qlikMessage.get("data");
-            if (data != null) {
-                // Criando um Struct para "after"
-                Struct afterStruct = new Struct(PAYLOAD_SCHEMA.field("after").schema());
-                // Atribua os dados de "data" para os campos do "afterStruct"
-                data.forEach(afterStruct::put);
-
-                payloadStruct.put("after", afterStruct);
+            Map<String, Object> afterData = (Map<String, Object>) qlikMessage.get("data");
+            if (afterData != null) {
+                afterSchema = createDynamicSchema(afterData);
+                afterStruct = createDynamicStruct(afterSchema, afterData);
             }
         }
 
+        String op = "c";
         // Copia a operação
         if (qlikMessage.containsKey("headers")) {
             Map<String, Object> headers = (Map<String, Object>) qlikMessage.get("headers");
-            Object operation = headers.get("operation");
+            if (headers.containsKey("operation")) {
+                Object operation = headers.get("operation");
 
-            String op = "c";
-            if (operation != null) {
-                if ("UPDATE".equals(operation.toString())) {
-                    op = "u";
-                }
-                if ("DELETE".equals(operation.toString())) {
-                    op = "d";
+                if (operation != null) {
+                    if ("UPDATE".equals(operation.toString())) {
+                        op = "u";
+                    }
+                    if ("DELETE".equals(operation.toString())) {
+                        op = "d";
+                    }
                 }
             }
-
-            payloadStruct.put("op", op);
         }
+
+        Schema payloadSchema = SchemaBuilder.struct()
+                .field("payload", SchemaBuilder.struct()
+                        .field("before", beforeSchema)
+                        .field("after", afterSchema)
+                        .field("op", Schema.STRING_SCHEMA)
+                ).build();
+
+        Struct payloadStruct = new Struct(payloadSchema);
+        payloadStruct.getStruct("payload").put("before", beforeStruct);
+        payloadStruct.getStruct("payload").put("after", afterStruct);
+        payloadStruct.getStruct("payload").put("op", op);
 
         return record.newRecord(
                 record.topic(),
                 record.kafkaPartition(),
                 record.keySchema(),
                 record.key(),
-                PAYLOAD_SCHEMA,
+                payloadSchema,
                 payloadStruct,
                 record.timestamp()
         );
@@ -98,5 +98,41 @@ public class QlikToDebeziumDirectTransform<R extends ConnectRecord<R>> implement
 
     @Override
     public void close() {
+    }
+
+    public Struct createDynamicStruct(Schema schema, Map<String, Object> data) {
+        Struct struct = new Struct(schema);
+
+        for (Map.Entry<String, Object> entry : data.entrySet()) {
+            String fieldName = entry.getKey();
+            Object fieldValue = entry.getValue();
+
+            struct.put(fieldName, fieldValue);
+        }
+
+        return struct;
+    }
+
+    public Schema createDynamicSchema(Map<String, Object> data) {
+        SchemaBuilder schemaBuilder = SchemaBuilder.struct().optional();
+
+        for (Map.Entry<String, Object> entry : data.entrySet()) {
+            String fieldName = entry.getKey();
+            Object fieldValue = entry.getValue();
+
+            if (fieldValue instanceof Integer) {
+                schemaBuilder.field(fieldName, Schema.OPTIONAL_INT32_SCHEMA);
+            } else if (fieldValue instanceof Long) {
+                schemaBuilder.field(fieldName, Schema.OPTIONAL_INT64_SCHEMA);
+            } else if (fieldValue instanceof Double) {
+                schemaBuilder.field(fieldName, Schema.OPTIONAL_FLOAT64_SCHEMA);
+            } else if (fieldValue instanceof Boolean) {
+                schemaBuilder.field(fieldName, Schema.OPTIONAL_BOOLEAN_SCHEMA);
+            } else {
+                schemaBuilder.field(fieldName, Schema.OPTIONAL_STRING_SCHEMA);
+            }
+        }
+
+        return schemaBuilder.build();
     }
 }
