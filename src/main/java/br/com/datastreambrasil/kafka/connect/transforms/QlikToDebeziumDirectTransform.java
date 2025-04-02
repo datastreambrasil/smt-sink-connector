@@ -7,6 +7,7 @@ import org.apache.kafka.connect.data.SchemaBuilder;
 import org.apache.kafka.connect.data.Struct;
 import org.apache.kafka.connect.transforms.Transformation;
 
+import java.util.HashMap;
 import java.util.Map;
 
 public class QlikToDebeziumDirectTransform<R extends ConnectRecord<R>> implements Transformation<R> {
@@ -27,12 +28,16 @@ public class QlikToDebeziumDirectTransform<R extends ConnectRecord<R>> implement
         }
 
         Map<String, Object> qlikMessage = (Map<String, Object>) record.value();
+        Map<String, Object> newMessage = new HashMap<>();
+        Map<String, Object> payload = new HashMap<>();
 
         Schema beforeSchema = SchemaBuilder.struct().build();
         Struct beforeStruct = new Struct(beforeSchema);
         // Copia toda a estrutura beforeData para before
         if (qlikMessage.containsKey("beforeData")) {
+
             Map<String, Object> beforeData = (Map<String, Object>) qlikMessage.get("beforeData");
+            payload.put("before", beforeData);
             if (beforeData != null) {
                 beforeSchema = createDynamicSchema(beforeData);
                 beforeStruct = createDynamicStruct(beforeSchema, beforeData);
@@ -44,6 +49,7 @@ public class QlikToDebeziumDirectTransform<R extends ConnectRecord<R>> implement
         // Copia toda a estrutura data para after
         if (qlikMessage.containsKey("data")) {
             Map<String, Object> afterData = (Map<String, Object>) qlikMessage.get("data");
+            payload.put("after", afterData);
             if (afterData != null) {
                 afterSchema = createDynamicSchema(afterData);
                 afterStruct = createDynamicStruct(afterSchema, afterData);
@@ -65,8 +71,12 @@ public class QlikToDebeziumDirectTransform<R extends ConnectRecord<R>> implement
                         op = "d";
                     }
                 }
+
+                payload.put("op", op);
             }
         }
+
+        newMessage.put("payload", payload);
 
         Schema payloadSchema = SchemaBuilder.struct().optional()
                 .field("before", beforeSchema)
@@ -93,8 +103,8 @@ public class QlikToDebeziumDirectTransform<R extends ConnectRecord<R>> implement
                 record.kafkaPartition(),
                 record.keySchema(),
                 record.key(),
-                payloadSchema,
-                payloadStruct,
+                record.valueSchema(),
+                newMessage,
                 record.timestamp()
         );
     }
