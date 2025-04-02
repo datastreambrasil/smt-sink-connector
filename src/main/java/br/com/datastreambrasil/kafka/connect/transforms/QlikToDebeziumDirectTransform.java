@@ -68,17 +68,25 @@ public class QlikToDebeziumDirectTransform<R extends ConnectRecord<R>> implement
             }
         }
 
-        Schema payloadSchema = SchemaBuilder.struct()
-                .field("payload", SchemaBuilder.struct()
-                        .field("before", beforeSchema)
-                        .field("after", afterSchema)
-                        .field("op", Schema.STRING_SCHEMA)
-                ).build();
+        Schema payloadSchema = SchemaBuilder.struct().optional()
+                .field("before", beforeSchema)
+                .field("after", afterSchema)
+                .field("op", Schema.STRING_SCHEMA)
+                .build();
 
         Struct payloadStruct = new Struct(payloadSchema);
-        payloadStruct.getStruct("payload").put("before", beforeStruct);
-        payloadStruct.getStruct("payload").put("after", afterStruct);
-        payloadStruct.getStruct("payload").put("op", op);
+
+        payloadStruct.put("before", beforeStruct);
+        payloadStruct.put("after", afterStruct);
+        payloadStruct.put("op", op);
+
+        Schema resultSchema = SchemaBuilder.struct().optional()
+                .field("payload", payloadSchema)
+                .build();
+
+        Struct resultStruct = new Struct(resultSchema);
+
+        resultStruct.put("payload", payloadStruct);
 
         return record.newRecord(
                 record.topic(),
